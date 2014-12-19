@@ -33,20 +33,20 @@
 //	dimension of problem:		/*	  0    		 1				*/
 unsigned int		multiGPU=0;	/*	{ singleGPU, multiGPU } 	*/
 
-//	STAT:						/*	  0    1    2    3    4		*/
-unsigned int		STAT	= 2;/*	{ sum, min, max, std, mean }*/
+//	STAT:						/*	  0    1    2    3     4		*/
+unsigned int		STAT	= 0;/*	{ sum, min, max, mean, std }*/
 //	input:
-unsigned int		Nmaps	= 5;
+unsigned int		Nmaps	= 21;
 // 	---SMALL---
 const char			*iDIR 	= "/home/giuliano/work/Projects/LIFE_Project/run_clime_daily/run#2/maps/";
-const char			*clPAR	= "temp_min_h24";
+const char			*clPAR	= "rain_cum_h24";
 // 	---LARGE---
 //const char			*iDIR 	= "/home/giuliano/git/cuda/weatherprog-cudac/data/";
 //const char			*clPAR	= "L5_temp_min_h24";
 //const char			*clPAR	= "L1_temp_min_h24";
 const char			*YEAR	= "2011";
 const char			*MONTH	= "01";
-const char			*SPATMOD= "gprism";
+const char			*SPATMOD= "idw2";
 const char			*RES	= "80";
 const char			*EXT	= ".tif";
 //	output:
@@ -154,6 +154,43 @@ __global__ void reduction_3d_max( const double *lin_maps, unsigned int map_len, 
 		}
 	}
 }
+__global__ void reduction_3d_mean( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
+	/*
+	 * 		lin_maps:	|------|------|------|	...	|------|
+	 * 					   1st	  2nd	 3rd	...	   Nth
+	 *
+	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
+	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
+	 */
+	unsigned int r 			= threadIdx.y;
+	unsigned int c 			= threadIdx.x;
+	unsigned int bdx		= blockDim.x;
+	unsigned int bdy		= blockDim.y;
+	unsigned int bix		= blockIdx.x;
+	unsigned int biy		= blockIdx.y;
+	unsigned int gdx		= gridDim.x;
+	//unsigned int gdy		= gridDim.y;
+	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
+/* 			  				     |_________|
+ * 								 block-offset
+ * 										     + |_____grid-offset_____|
+ */
+	unsigned int ii 		= 0;
+	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
+		if(tid < map_len){
+			sum_map[tid] = sum_map[tid] + lin_maps[tid + ii*map_len] + lin_maps[(ii+1)*map_len + tid];
+		}
+	}
+	if(Nmaps % 2){
+		if(tid < map_len){
+			sum_map[tid] = sum_map[tid] + lin_maps[(Nmaps-1)*map_len + tid];
+		}
+	}
+	if(tid < map_len){
+		sum_map[tid] = sum_map[tid] / Nmaps;
+	}
+}
+
 __global__ void reduction_2d_sum( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d ){
 	/*
 	 * 		lin_maps:	|------|------|------|	...	|------|
@@ -366,19 +403,19 @@ __global__ void reduction_2d_ssd( const double *lin_maps, unsigned int map_len, 
 		res					= map_len - bdx * nBlks;
 
 		// copy the first bdx pixels to shared mem:
-		sdata[tid]			= powf( lin_maps[  tid + bdx*0		+ bix*map_len ] - sum_map_2d[bix], 2 );
+		sdata[tid]			= powf( lin_maps[  tid + bdx*0		+ bix*map_len ] - sum_map_2d[bix], 2 ); // deviation of pixel from mean val
 		__syncthreads();
 
 		/* each thread is responsible for its tid in every bix
 		 * (excluding the residual pixels smaller than bdx):
 		 */
 		while( i < nBlks + remind ){
-			sdata[tid]		+= powf( lin_maps[ tid + bdx*i		+ bix*map_len ] - sum_map_2d[bix], 2 );
+			sdata[tid]		+= powf( lin_maps[ tid + bdx*i		+ bix*map_len ] - sum_map_2d[bix], 2 ); // sum deviations
 			i++;
 		}
 		// residual pixels not forming a block equal to bdx is handled by tid<res threads:
 		if( tid<res ){
-			sdata[tid]		+= powf( lin_maps[ tid + bdx*nBlks	+ bix*map_len ] - sum_map_2d[bix], 2 );
+			sdata[tid]		+= powf( lin_maps[ tid + bdx*nBlks	+ bix*map_len ] - sum_map_2d[bix], 2 ); // sum deviations
 		}
 		__syncthreads();
 
@@ -490,6 +527,9 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned int m
 	// memset:
 	CUDA_CHECK_RETURN( cudaMemset(dev_oPLOT, 0,  (size_t)oPLOT_bytes) 		);
 
+	/*
+	 * 		****3-D aggregation****
+	 */
 	// kernel size:
 	unsigned int 	BLOCKSIZE, GRIDSIZE;
 	BLOCKSIZE	= 32;//floor(sqrt( devProp.maxThreadsPerBlock ));
@@ -522,10 +562,20 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned int m
 		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
 		end_t = clock();
 		break;
+	case 3: // MEAN
+		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, 0.0,  (size_t)iMap_bytes) );
+		start_t = clock();
+		reduction_3d_mean<<<grid,block>>>( dev_iGRIDi, map_len, Nmaps, dev_oGRID );
+		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
+		end_t = clock();
+		break;
 	}
 	// elapsed time [ms]:
 	elapsed_time += (int)( (double)(end_t  - start_t ) / (double)CLOCKS_PER_SEC * 1000 );
 
+	/*
+	 * 		****2-D aggregation****
+	 */
 	// call 2d reduction to computing mean & std for scatterplot:
 	dim3 block_2d( BLOCKSIZE*BLOCKSIZE,1,1);
 	dim3 grid_2d ( Nmaps,1,1);

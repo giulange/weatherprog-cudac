@@ -36,14 +36,16 @@ unsigned int		multiGPU=0;	/*	{ singleGPU, multiGPU } 	*/
 //	STAT:						/*	  0    1    2    3     4		*/
 unsigned int		STAT	= 0;/*	{ sum, min, max, mean, std }*/
 //	input:
-unsigned int		Nmaps	= 21;
+unsigned int		Nmaps	= 31;
 // 	---SMALL---
 const char			*iDIR 	= "/home/giuliano/work/Projects/LIFE_Project/run_clime_daily/run#2/maps/";
 const char			*clPAR	= "rain_cum_h24";
+const char			*iFIL_ROI="/home/giuliano/git/cuda/weatherprog-cudac/data/roi_vt.tif";
 // 	---LARGE---
 //const char			*iDIR 	= "/home/giuliano/git/cuda/weatherprog-cudac/data/";
 //const char			*clPAR	= "L5_temp_min_h24";
 //const char			*clPAR	= "L1_temp_min_h24";
+
 const char			*YEAR	= "2011";
 const char			*MONTH	= "01";
 const char			*SPATMOD= "idw2";
@@ -55,106 +57,7 @@ const char 			*oFILc 	= "out_C.tif";
 const char 			*oFILcu	= "out_CUDA.tif";
 // ************* GLOBAL VARs ************* //
 
-__global__ void reduction_3d_sum( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
-	/*
-	 * 		lin_maps:	|------|------|------|	...	|------|
-	 * 					   1st	  2nd	 3rd	...	   Nth
-	 *
-	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
-	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
-	 */
-	unsigned int r 			= threadIdx.y;
-	unsigned int c 			= threadIdx.x;
-	unsigned int bdx		= blockDim.x;
-	unsigned int bdy		= blockDim.y;
-	unsigned int bix		= blockIdx.x;
-	unsigned int biy		= blockIdx.y;
-	unsigned int gdx		= gridDim.x;
-	//unsigned int gdy		= gridDim.y;
-	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
-/* 			  				     |_________|
- * 								 block-offset
- * 										     + |_____grid-offset_____|
- */
-	unsigned int ii 		= 0;
-	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
-		if(tid < map_len){
-			sum_map[tid] = sum_map[tid] + lin_maps[tid + ii*map_len] + lin_maps[(ii+1)*map_len + tid];
-		}
-	}
-	if(Nmaps % 2){
-		if(tid < map_len){
-			sum_map[tid] = sum_map[tid] + lin_maps[(Nmaps-1)*map_len + tid];
-		}
-	}
-}
-__global__ void reduction_3d_min( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
-	/*
-	 * 		lin_maps:	|------|------|------|	...	|------|
-	 * 					   1st	  2nd	 3rd	...	   Nth
-	 *
-	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
-	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
-	 */
-	unsigned int r 			= threadIdx.y;
-	unsigned int c 			= threadIdx.x;
-	unsigned int bdx		= blockDim.x;
-	unsigned int bdy		= blockDim.y;
-	unsigned int bix		= blockIdx.x;
-	unsigned int biy		= blockIdx.y;
-	unsigned int gdx		= gridDim.x;
-	//unsigned int gdy		= gridDim.y;
-	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
-/* 			  				     |_________|
- * 								 block-offset
- * 										     + |_____grid-offset_____|
- */
-	unsigned int ii 		= 0;
-	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
-		if(tid < map_len){
-			sum_map[tid] = fminf( fminf(sum_map[tid], lin_maps[tid + ii*map_len]) , lin_maps[(ii+1)*map_len + tid] );
-		}
-	}
-	if(Nmaps % 2){
-		if(tid < map_len){
-			sum_map[tid] = fminf( sum_map[tid], lin_maps[(Nmaps-1)*map_len + tid] );
-		}
-	}
-}
-__global__ void reduction_3d_max( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
-	/*
-	 * 		lin_maps:	|------|------|------|	...	|------|
-	 * 					   1st	  2nd	 3rd	...	   Nth
-	 *
-	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
-	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
-	 */
-	unsigned int r 			= threadIdx.y;
-	unsigned int c 			= threadIdx.x;
-	unsigned int bdx		= blockDim.x;
-	unsigned int bdy		= blockDim.y;
-	unsigned int bix		= blockIdx.x;
-	unsigned int biy		= blockIdx.y;
-	unsigned int gdx		= gridDim.x;
-	//unsigned int gdy		= gridDim.y;
-	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
-/* 			  				     |_________|
- * 								 block-offset
- * 										     + |_____grid-offset_____|
- */
-	unsigned int ii 		= 0;
-	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
-		if(tid < map_len){
-			sum_map[tid] = fmaxf( fmaxf(sum_map[tid], lin_maps[tid + ii*map_len]) , lin_maps[(ii+1)*map_len + tid] );
-		}
-	}
-	if(Nmaps % 2){
-		if(tid < map_len){
-			sum_map[tid] = fmaxf( sum_map[tid], lin_maps[(Nmaps-1)*map_len + tid] );
-		}
-	}
-}
-__global__ void reduction_3d_mean( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
+__global__ void reduction_3d_sum( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
 	/*
 	 * 		lin_maps:	|------|------|------|	...	|------|
 	 * 					   1st	  2nd	 3rd	...	   Nth
@@ -187,11 +90,119 @@ __global__ void reduction_3d_mean( const double *lin_maps, unsigned int map_len,
 		}
 	}
 	if(tid < map_len){
-		sum_map[tid] = sum_map[tid] / Nmaps;
+		sum_map[tid] *= (double)roiMap[tid];
+	}
+}
+__global__ void reduction_3d_min( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
+	/*
+	 * 		lin_maps:	|------|------|------|	...	|------|
+	 * 					   1st	  2nd	 3rd	...	   Nth
+	 *
+	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
+	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
+	 */
+	unsigned int r 			= threadIdx.y;
+	unsigned int c 			= threadIdx.x;
+	unsigned int bdx		= blockDim.x;
+	unsigned int bdy		= blockDim.y;
+	unsigned int bix		= blockIdx.x;
+	unsigned int biy		= blockIdx.y;
+	unsigned int gdx		= gridDim.x;
+	//unsigned int gdy		= gridDim.y;
+	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
+/* 			  				     |_________|
+ * 								 block-offset
+ * 										     + |_____grid-offset_____|
+ */
+	unsigned int ii 		= 0;
+	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
+		if(tid < map_len){
+			sum_map[tid] = fminf( fminf(sum_map[tid], lin_maps[tid + ii*map_len]) , lin_maps[(ii+1)*map_len + tid] );
+		}
+	}
+	if(Nmaps % 2){
+		if(tid < map_len){
+			sum_map[tid] = fminf( sum_map[tid], lin_maps[(Nmaps-1)*map_len + tid] );
+		}
+	}
+	if(tid < map_len){
+		sum_map[tid] *= (double)roiMap[tid];
+	}
+}
+__global__ void reduction_3d_max( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
+	/*
+	 * 		lin_maps:	|------|------|------|	...	|------|
+	 * 					   1st	  2nd	 3rd	...	   Nth
+	 *
+	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
+	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
+	 */
+	unsigned int r 			= threadIdx.y;
+	unsigned int c 			= threadIdx.x;
+	unsigned int bdx		= blockDim.x;
+	unsigned int bdy		= blockDim.y;
+	unsigned int bix		= blockIdx.x;
+	unsigned int biy		= blockIdx.y;
+	unsigned int gdx		= gridDim.x;
+	//unsigned int gdy		= gridDim.y;
+	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
+/* 			  				     |_________|
+ * 								 block-offset
+ * 										     + |_____grid-offset_____|
+ */
+	unsigned int ii 		= 0;
+	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
+		if(tid < map_len){
+			sum_map[tid] = fmaxf( fmaxf(sum_map[tid], lin_maps[tid + ii*map_len]) , lin_maps[(ii+1)*map_len + tid] );
+		}
+	}
+	if(Nmaps % 2){
+		if(tid < map_len){
+			sum_map[tid] = fmaxf( sum_map[tid], lin_maps[(Nmaps-1)*map_len + tid] );
+		}
+	}
+	if(tid < map_len){
+		sum_map[tid] *= roiMap[tid];
+	}
+}
+__global__ void reduction_3d_mean( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
+	/*
+	 * 		lin_maps:	|------|------|------|	...	|------|
+	 * 					   1st	  2nd	 3rd	...	   Nth
+	 *
+	 * 		block:		blockDim.Y(=1) * blockDim.X(=32^2, other);
+	 * 		grid:		gridDim.Y(=1)  * gridDim.X(=map_len / blockDim.X);
+	 */
+	unsigned int r 			= threadIdx.y;
+	unsigned int c 			= threadIdx.x;
+	unsigned int bdx		= blockDim.x;
+	unsigned int bdy		= blockDim.y;
+	unsigned int bix		= blockIdx.x;
+	unsigned int biy		= blockIdx.y;
+	unsigned int gdx		= gridDim.x;
+	//unsigned int gdy		= gridDim.y;
+	unsigned long int tid 	= (  c + bdx*( r + bdy * (bix + gdx*biy) )  );
+/* 			  				     |_________|
+ * 								 block-offset
+ * 										     + |_____grid-offset_____|
+ */
+	unsigned int ii 		= 0;
+	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
+		if(tid < map_len){
+			sum_map[tid] = sum_map[tid] + lin_maps[tid + ii*map_len] + lin_maps[(ii+1)*map_len + tid];
+		}
+	}
+	if(Nmaps % 2){
+		if(tid < map_len){
+			sum_map[tid] = sum_map[tid] + lin_maps[(Nmaps-1)*map_len + tid];
+		}
+	}
+	if(tid < map_len){
+		sum_map[tid] = sum_map[tid]*roiMap[tid] / Nmaps;
 	}
 }
 
-__global__ void reduction_2d_sum( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d ){
+__global__ void reduction_2d_sum( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d ){
 	/*
 	 * 		lin_maps:	|------|------|------|	...	|------|
 	 * 					   1st	  2nd	 3rd	...	   Nth
@@ -209,8 +220,6 @@ __global__ void reduction_2d_sum( const double *lin_maps, unsigned int map_len, 
 	unsigned int 	nBlks 	= 0;
 	unsigned int 	res		= 0;
 	unsigned int 	i		= 0;
-	unsigned int 	remind 	= 0;
-	if( map_len % bdx >0 ) remind = 1;
 
 	if( bix < gdx ){
 
@@ -219,19 +228,19 @@ __global__ void reduction_2d_sum( const double *lin_maps, unsigned int map_len, 
 		res					= map_len - bdx * nBlks;
 
 		// copy the first bdx pixels to shared mem:
-		sdata[tid]			= lin_maps[  tid + bdx*0 	 + bix*map_len ];
+		sdata[tid]			= lin_maps[  tid + bdx*0 	 + bix*map_len ] *roiMap[tid];
 		__syncthreads();
 
 		/* each thread is responsible for its tid in all nBlks
 		 * (excluding the residual pixels smaller than bdx):
 		 */
-		while( i < nBlks + remind ){
-			sdata[tid]		+= lin_maps[ tid + bdx*i	 + bix*map_len ];
+		while( i < nBlks ){
+			sdata[tid]		+= lin_maps[ tid + bdx*i	 + bix*map_len ] *roiMap[tid];
 			i++;
 		}
 		// residual pixels not forming a block equal to bdx is handled by tid<res threads:
 		if( tid<res ){
-			sdata[tid]		+= lin_maps[ tid + bdx*nBlks + bix*map_len ];
+			sdata[tid]		+= lin_maps[ tid + bdx*nBlks + bix*map_len ] *roiMap[tid];
 		}
 		__syncthreads();
 
@@ -246,7 +255,7 @@ __global__ void reduction_2d_sum( const double *lin_maps, unsigned int map_len, 
 	    if (tid == 0) sum_map_2d[bix] = sdata[0];
 	}
 }
-__global__ void reduction_2d_mean( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d ){
+__global__ void reduction_2d_mean( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d ){
 	/*
 	 * 		lin_maps:	|------|------|------|	...	|------|
 	 * 					   1st	  2nd	 3rd	...	   Nth
@@ -264,8 +273,6 @@ __global__ void reduction_2d_mean( const double *lin_maps, unsigned int map_len,
 	unsigned int 	nBlks 	= 0;
 	unsigned int 	res		= 0;
 	unsigned int 	i		= 0;
-	unsigned int 	remind 	= 0;
-	if( map_len % bdx >0 ) remind = 1;
 
 	if( bix < gdx ){
 
@@ -274,19 +281,19 @@ __global__ void reduction_2d_mean( const double *lin_maps, unsigned int map_len,
 		res					= map_len - bdx * nBlks;
 
 		// copy the first bdx pixels to shared mem:
-		sdata[tid]			= lin_maps[  tid + bdx*0 	 + bix*map_len ];
+		sdata[tid]			= lin_maps[  tid + bdx*0 	 + bix*map_len ] *roiMap[tid + bdx*0];
 		__syncthreads();
 
 		/* each thread is responsible for its tid in all nBlks
 		 * (excluding the residual pixels smaller than bdx):
 		 */
-		while( i < nBlks + remind ){
-			sdata[tid]		+= lin_maps[ tid + bdx*i	 + bix*map_len ];
+		while( i < nBlks ){
+			sdata[tid]		+= lin_maps[ tid + bdx*i	 + bix*map_len ] *roiMap[tid + bdx*i];
 			i++;
 		}
 		// residual pixels not forming a block equal to bdx is handled by tid<res threads:
 		if( tid<res ){
-			sdata[tid]		+= lin_maps[ tid + bdx*nBlks + bix*map_len ];
+			sdata[tid]		+= lin_maps[ tid + bdx*nBlks + bix*map_len ] *roiMap[tid + bdx*nBlks];
 		}
 		__syncthreads();
 
@@ -301,7 +308,7 @@ __global__ void reduction_2d_mean( const double *lin_maps, unsigned int map_len,
 	    if (tid == 0) sum_map_2d[bix] = (double)__fdividef( (float)sdata[0], (float)(map_len-1) );
 	}
 }
-__global__ void reduction_2d_std( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d  ){
+__global__ void reduction_2d_std( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d  ){
 	/*
 	 * 		lin_maps:	|------|------|------|	...	|------|
 	 * 					   1st	  2nd	 3rd	...	   Nth
@@ -332,8 +339,6 @@ __global__ void reduction_2d_std( const double *lin_maps, unsigned int map_len, 
 	unsigned int 	nBlks 	= 0;
 	unsigned int 	res		= 0;
 	unsigned int 	i		= 0;
-	unsigned int 	remind 	= 0;
-	if( map_len % bdx >0 ) remind = 1;
 
 	if( bix < gdx ){
 
@@ -342,19 +347,19 @@ __global__ void reduction_2d_std( const double *lin_maps, unsigned int map_len, 
 		res					= map_len - bdx * nBlks;
 
 		// copy the first bdx pixels to shared mem:
-		sdata[tid]			= powf( lin_maps[  tid + bdx*0		+ bix*map_len ] - sum_map_2d[bix], 2 );
+		sdata[tid]			= powf( lin_maps[  tid + bdx*0		+ bix*map_len ] - sum_map_2d[bix], 2 ) *roiMap[tid + bdx*0];
 		__syncthreads();
 
 		/* each thread is responsible for its tid in every bix
 		 * (excluding the residual pixels smaller than bdx):
 		 */
-		while( i < nBlks + remind ){
-			sdata[tid]		+= powf( lin_maps[ tid + bdx*i		+ bix*map_len ] - sum_map_2d[bix], 2 );
+		while( i < nBlks ){
+			sdata[tid]		+= powf( lin_maps[ tid + bdx*i		+ bix*map_len ] - sum_map_2d[bix], 2 ) *roiMap[tid + bdx*i];
 			i++;
 		}
 		// residual pixels not forming a block equal to bdx is handled by tid<res threads:
 		if( tid<res ){
-			sdata[tid]		+= powf( lin_maps[ tid + bdx*nBlks	+ bix*map_len ] - sum_map_2d[bix], 2 );
+			sdata[tid]		+= powf( lin_maps[ tid + bdx*nBlks	+ bix*map_len ] - sum_map_2d[bix], 2 ) *roiMap[tid + bdx*nBlks];
 		}
 		__syncthreads();
 
@@ -372,7 +377,7 @@ __global__ void reduction_2d_std( const double *lin_maps, unsigned int map_len, 
 	    }
 	}
 }
-__global__ void reduction_2d_ssd( const double *lin_maps, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d  ){
+__global__ void reduction_2d_ssd( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map_2d  ){
 	/*
 	 * 		lin_maps:	|------|------|------|	...	|------|
 	 * 					   1st	  2nd	 3rd	...	   Nth
@@ -393,8 +398,6 @@ __global__ void reduction_2d_ssd( const double *lin_maps, unsigned int map_len, 
 	unsigned int 	nBlks 	= 0;
 	unsigned int 	res		= 0;
 	unsigned int 	i		= 0;
-	unsigned int 	remind 	= 0;
-	if( map_len % bdx >0 ) remind = 1;
 
 	if( bix < gdx ){
 
@@ -403,19 +406,19 @@ __global__ void reduction_2d_ssd( const double *lin_maps, unsigned int map_len, 
 		res					= map_len - bdx * nBlks;
 
 		// copy the first bdx pixels to shared mem:
-		sdata[tid]			= powf( lin_maps[  tid + bdx*0		+ bix*map_len ] - sum_map_2d[bix], 2 ); // deviation of pixel from mean val
+		sdata[tid]			= powf( lin_maps[  tid + bdx*0		+ bix*map_len ] - sum_map_2d[bix], 2 ) *roiMap[tid + bdx*0]; // deviation of pixel from mean val
 		__syncthreads();
 
 		/* each thread is responsible for its tid in every bix
 		 * (excluding the residual pixels smaller than bdx):
 		 */
-		while( i < nBlks + remind ){
-			sdata[tid]		+= powf( lin_maps[ tid + bdx*i		+ bix*map_len ] - sum_map_2d[bix], 2 ); // sum deviations
+		while( i < nBlks ){
+			sdata[tid]		+= powf( lin_maps[ tid + bdx*i		+ bix*map_len ] - sum_map_2d[bix], 2 ) *roiMap[tid + bdx*i]; // sum deviations
 			i++;
 		}
 		// residual pixels not forming a block equal to bdx is handled by tid<res threads:
 		if( tid<res ){
-			sdata[tid]		+= powf( lin_maps[ tid + bdx*nBlks	+ bix*map_len ] - sum_map_2d[bix], 2 ); // sum deviations
+			sdata[tid]		+= powf( lin_maps[ tid + bdx*nBlks	+ bix*map_len ] - sum_map_2d[bix], 2 ) *roiMap[tid + bdx*nBlks]; // sum deviations
 		}
 		__syncthreads();
 
@@ -508,9 +511,80 @@ int C_max_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
 	return elapsed_time;
 }
-int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_CUDA, metadata MD ){
+int C_mean_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+
+	unsigned int	ii=0;
+	uint32_t 		loc;
+	clock_t			start_t,end_t;
+
+	// initialize oGRID:
+	for( loc=0; loc<map_len; loc++ ) oGRID[loc]=0;
+
+	// computing node:
+	start_t = clock();
+	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
+		for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] + iGRIDi[ii*map_len + loc] + iGRIDi[(ii+1)*map_len + loc];
+	}
+	if(Nmaps % 2) for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] + iGRIDi[(Nmaps-1)*map_len + loc];
+	end_t = clock();
+
+	for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] / Nmaps;
+
+	// save on HDD:
+	geotiffwrite( iFIL1, oFIL_C, MD, oGRID );
+
+	// elapsed time [ms]:
+	int elapsed_time = (int)( (double)(end_t  - start_t ) / (double)CLOCKS_PER_SEC * 1000 );
+	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
+	return elapsed_time;
+}
+int C_std_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+	/*
+ 	 * 		The equation is split in four parts, given population A:
+ 	 *
+	 * 			(1) MEAN of population A			--> m = mean(A)
+	 *					m:scalar, A:grid
+	 * 			(2)	SQUARED DIFFERENCES				--> B = (A-m).^2
+	 *
+	 * 			(2) MEAN (of squared differences)	--> C = b1/(N-1) + b2/(N-1) + ... + bN/(N-1)
+	 *					bi:singleton of B
+	 * 			(3)	SQRT							--> STD = sqrt( C )
+	 */
+
+	double *meanGRID= (double *) CPLMalloc( map_len*sizeof( double ) );
+	unsigned int	ii=0;
+	uint32_t 		loc;
+	clock_t			start_t,end_t;
+
+	// initialize oGRID:
+	for( loc=0; loc<map_len; loc++ ){ oGRID[loc]=0; meanGRID[loc]=0; }
+
+	// computing node:
+	start_t = clock();
+	//		** -1- MEAN **
+	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
+		for( loc=0; loc<map_len; loc++ ) meanGRID[loc] = meanGRID[loc] + iGRIDi[ii*map_len + loc] + iGRIDi[(ii+1)*map_len + loc];
+	}
+	if(Nmaps % 2) for( loc=0; loc<map_len; loc++ ) meanGRID[loc] = meanGRID[loc] + iGRIDi[(Nmaps-1)*map_len + loc];
+	for( loc=0; loc<map_len; loc++ ) meanGRID[loc] = meanGRID[loc] / Nmaps;
+	//		** -2+3- MEAN of SQUARED DIFF **
+	for( loc=0; loc<map_len; loc++ ){
+		for( ii=0; ii<Nmaps; ii++ ) oGRID[loc] += powf(iGRIDi[ii*map_len + loc]-meanGRID[loc],2) / (Nmaps-1);
+		oGRID[loc] = sqrt(oGRID[loc]);
+	}
+	end_t = clock();
+	// save on HDD:
+	geotiffwrite( iFIL1, oFIL_C, MD, oGRID );
+
+	// elapsed time [ms]:
+	int elapsed_time = (int)( (double)(end_t  - start_t ) / (double)CLOCKS_PER_SEC * 1000 );
+	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
+	return elapsed_time;
+}
+int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_CUDA, metadata MD ){
 
 	double			*dev_iGRIDi, *dev_oGRID, *dev_oPLOT;
+	unsigned char	*dev_ROI;
 	clock_t			start_t,end_t;
 	unsigned int 	elapsed_time	= 0;
 	unsigned int	Ncols			= 3;
@@ -520,10 +594,12 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned int m
 
 	// initialize grids on GPU:
 	CUDA_CHECK_RETURN( cudaMalloc((void **)&dev_iGRIDi, iMap_bytes*Nmaps) 	);
+	CUDA_CHECK_RETURN( cudaMalloc((void **)&dev_ROI,  	map_len*sizeof( unsigned char )) );
 	CUDA_CHECK_RETURN( cudaMalloc((void **)&dev_oGRID,  iMap_bytes) 		);
 	CUDA_CHECK_RETURN( cudaMalloc((void **)&dev_oPLOT,  oPLOT_bytes) 		);
 	// H2D:
-	CUDA_CHECK_RETURN( cudaMemcpy(dev_iGRIDi , iGRIDi,  iMap_bytes*Nmaps, cudaMemcpyHostToDevice) );
+	CUDA_CHECK_RETURN( cudaMemcpy(dev_iGRIDi, iGRIDi, iMap_bytes*Nmaps, cudaMemcpyHostToDevice) );
+	CUDA_CHECK_RETURN( cudaMemcpy(dev_ROI, roiMap, map_len*sizeof( unsigned char ), cudaMemcpyHostToDevice) );
 	// memset:
 	CUDA_CHECK_RETURN( cudaMemset(dev_oPLOT, 0,  (size_t)oPLOT_bytes) 		);
 
@@ -537,35 +613,41 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned int m
 	dim3 block( BLOCKSIZE,BLOCKSIZE,1);
 	dim3 grid ( GRIDSIZE,1,1);
 
+	/*
+	 *  see http://en.wikipedia.org/wiki/Double-precision_floating-point_format
+	 */
+	double MIN_FILL_VAL = 0x0010000000000000;
+	double MAX_FILL_VAL = 0x7fefffffffffffff;
+
 	// computing node:
 	switch(STAT){
 	case 0: // SUM
 		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, 0,  (size_t)iMap_bytes) );
 		start_t = clock();
-		reduction_3d_sum<<<grid,block>>>( dev_iGRIDi, map_len, Nmaps, dev_oGRID );
+		reduction_3d_sum<<<grid,block>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oGRID );
 		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
 		end_t = clock();
 		break;
 
 	case 1: // MIN
-		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, 1000.0,  (size_t)iMap_bytes) );
+		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, MAX_FILL_VAL,  (size_t)iMap_bytes) );
 		start_t = clock();
-		reduction_3d_min<<<grid,block>>>( dev_iGRIDi, map_len, Nmaps, dev_oGRID );
+		reduction_3d_min<<<grid,block>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oGRID );
 		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
 		end_t = clock();
 		break;
 
 	case 2: // MAX
-		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, -1000.0,  (size_t)iMap_bytes) );
+		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, MIN_FILL_VAL,  (size_t)iMap_bytes) );
 		start_t = clock();
-		reduction_3d_max<<<grid,block>>>( dev_iGRIDi, map_len, Nmaps, dev_oGRID );
+		reduction_3d_max<<<grid,block>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oGRID );
 		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
 		end_t = clock();
 		break;
 	case 3: // MEAN
 		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, 0.0,  (size_t)iMap_bytes) );
 		start_t = clock();
-		reduction_3d_mean<<<grid,block>>>( dev_iGRIDi, map_len, Nmaps, dev_oGRID );
+		reduction_3d_mean<<<grid,block>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oGRID );
 		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
 		end_t = clock();
 		break;
@@ -594,9 +676,9 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned int m
 	 * 	3.\ "sqrt( ... / (numel(A)-1) )"	--> in "C" (because reduce_2d_std doesn't work!!)
 	 * 	******Standard Deviation******
 	 */
-	reduction_2d_mean<<<grid_2d,block_2d,shmem>>>( dev_iGRIDi, map_len, Nmaps, dev_oPLOT );
+	reduction_2d_mean<<<grid_2d,block_2d,shmem>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oPLOT );
 	//reduction_2d_std <<<grid_2d,block_2d,shmem>>>( dev_iGRIDi, map_len, Nmaps, dev_oPLOT );
-	reduction_2d_ssd <<<grid_2d,block_2d,shmem>>>( dev_iGRIDi, map_len, Nmaps, dev_oPLOT );
+	reduction_2d_ssd <<<grid_2d,block_2d,shmem>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oPLOT );
 	CUDA_CHECK_RETURN( cudaMemcpy(oPLOT, dev_oPLOT, oPLOT_bytes, cudaMemcpyDeviceToHost) );
 	for(ii=0;ii<Nmaps;ii++){
 		oPLOT[Nmaps*2+ii] = oPLOT[ii] + sqrt( oPLOT[Nmaps*1+ii] / (double)(map_len-1) );
@@ -654,11 +736,18 @@ void whole_mat_single_GPU(){
 	double	iMap_bytes	= map_len*sizeof( double );
 	double	oPLOT_bytes	= Nmaps*3*sizeof( double );
 	double *iGRIDi		= (double *) CPLMalloc( iMap_bytes*Nmaps 	);
+	unsigned char *roiMap = (unsigned char*) CPLMalloc( map_len*sizeof( unsigned char ) );
 	double *oGRID_c		= (double *) CPLMalloc( iMap_bytes 			);
 	double *oGRID_cu	= (double *) CPLMalloc( iMap_bytes			);
 	double *oPLOT_cu	= (double *) CPLMalloc( oPLOT_bytes 		);
 	double DIFF			= 0;
 	unsigned int loc	= 0;
+
+	// import ROI
+	// -roi has different data type:
+	metadata MDroi = MD;
+	MDroi.pixel_type = GDT_Byte;
+	geotiffread( iFIL_ROI, MDroi, &roiMap[0] );
 
 	// import Map using GRID-filename:
 	for(ii=0;ii<Nmaps;ii++){
@@ -688,10 +777,22 @@ void whole_mat_single_GPU(){
 		printf("**********\n* %s *\n* %s *\n**********\n\n", "-MAX-","single");
 		elapsed_time_C 		= C_max_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
 		break;
+
+	case 3:
+		/*	MEAN*/
+		printf("**********\n* %s *\n* %s *\n**********\n\n", "-MEAN-","single");
+		elapsed_time_C 		= C_mean_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		break;
+
+	case 4:
+		/*	STD	*/
+		printf("**********\n* %s *\n* %s *\n**********\n\n", "-STD-","single");
+		elapsed_time_C 		= C_std_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		break;
 	}
 
 	// *** CUDA ***
-	elapsed_time_CUDA 		= CUDA_whole_mat(oGRID_cu, oPLOT_cu, iGRIDi, map_len, iFIL1, oFIL_CUDA, MD);
+	elapsed_time_CUDA 		= CUDA_whole_mat(oGRID_cu, oPLOT_cu, iGRIDi, roiMap, map_len, iFIL1, oFIL_CUDA, MD);
 
 	// DIFF
 	for( loc=0; loc<map_len; loc++ ) DIFF += (oGRID_c[loc] - oGRID_cu[loc]);

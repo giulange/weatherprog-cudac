@@ -28,7 +28,7 @@ struct metadata{
 	double 			ipY;			//	the upper left Y coordinate of raster in projected spatial ref
 	double 			skewX;			//	the georeference X skew (or rotation parameter)
 	double 			skewY;			//	the georeference Y skew (or rotation parameter)
-	const char		*SRID_name;		// Get the authority name
+	const char		*SRID_name;		// 	Get the authority name
 	const char		*SRID;			//	the spatial reference identifier of the raster (as defined in spatial_ref_sys table)
 	const char		*WKTproj;		//	the projection coordinate system of the image in OpenGIS WKT format
 	uint32_t 		width;			//	the width of the raster in pixels	(ncols)

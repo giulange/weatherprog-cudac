@@ -30,16 +30,17 @@
 
 %% create random ROI
 
-iFIL = '/home/giuliano/work/Projects/LIFE_Project/run_clime_daily/run#2/maps/rain_cum_h24-20110121-idw2-80.tif';
-info = geotiffinfo( iFIL );
-
-ROI_VT = rand(info.Height,info.Width);
-ROI_VT(ROI_VT>0.5)  = 1;
-ROI_VT(ROI_VT<=0.5) = 0;
-ROI_VT = uint8(ROI_VT);
-
-iFIL_ROI = '/home/giuliano/git/cuda/weatherprog-cudac/data/roi_vt.tif';
-geotiffwrite(iFIL_ROI,ROI_VT,info.RefMatrix, 'GeoKeyDirectoryTag', info.GeoTIFFTags.GeoKeyDirectoryTag);
+% iFIL = '/home/giuliano/work/Projects/LIFE_Project/run_clime_daily/run#2/maps/rain_cum_h24-20110121-idw2-80.tif';
+% info = geotiffinfo( iFIL );
+% 
+% ROI_VT = rand(info.Height,info.Width);
+% ROI_VT(ROI_VT>0.5)  = 1;
+% ROI_VT(ROI_VT<=0.5) = 0;
+% ROI_VT = uint8(ROI_VT);
+% 
+% iFIL_ROI = '/home/giuliano/git/cuda/weatherprog-cudac/data/roi_vt.tif';
+% geotiffwrite(iFIL_ROI,ROI_VT,info.RefMatrix, 'GeoKeyDirectoryTag', info.GeoTIFFTags.GeoKeyDirectoryTag);
+% 
 
 %% ::INPUT::
 
@@ -105,6 +106,9 @@ for ii = 1:Nmaps
     Om = min(Om, Z);
     myTOC = myTOC + toc;
 end
+tic;
+Om = Om .*ROI;
+myTOC = myTOC + toc;
 
 Oc      = geotiffread(oFILc);
 Ocu     = geotiffread(oFILcu);
@@ -130,6 +134,9 @@ for ii = 1:Nmaps
     Om = max(Om, Z);
     myTOC = myTOC + toc;
 end
+tic;
+Om = Om .*ROI;
+myTOC = myTOC + toc;
 
 Oc      = geotiffread(oFILc);
 Ocu     = geotiffread(oFILcu);
@@ -155,7 +162,7 @@ for ii = 1:Nmaps
     Om = Om + Z;
     myTOC = myTOC + toc;
 end
-Om      = Om / Nmaps;
+Om      = Om .* ROI / Nmaps;
 
 Oc      = geotiffread(oFILc);
 Ocu     = geotiffread(oFILcu);
@@ -209,16 +216,18 @@ for ii = 1:Nmaps
 end
 
 % Oc      = [1,1];
-Ocu     = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOT');
+Ocu         = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOT');
+Oc          = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTc');
 
 fprintf('%40s %5.2f\n','Difference between MatLab and CUDA:',sum(Om_s(:)-Ocu(:,1)))
+fprintf('%40s %5.2f\n','Difference between MatLab and C:',sum(Om_s(:)-Oc(:,1)))
 fprintf('%40s %5.2f [ms]\n','MatLab elapsed time:',myTOC*1000)
 
 clear ii
 
 %% --- ::2d-MEAN::
 
-fpf('2d-SUM');
+fpf('2d-MEAN');
 
 Om_m    = zeros( Nmaps, 1 );
 myTOC   = 0;
@@ -227,15 +236,17 @@ for ii = 1:Nmaps
     iFILi   = fullfile( iDIR,[Fname,day,'-',METHOD,'-80.tif'] );
     Z   = geotiffread(iFILi);
     tic;
-    Om_m(ii)  = sum(Z(:)) / numel(Z);
+    Om_m(ii)  = sum(Z(:).*ROI(:)) / (numel(Z)-1);
     myTOC = myTOC + toc;
 end
 
 % Oc      = [1,1];
-Ocu     = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOT');
+Ocu         = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTcu');
+Oc          = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTc');
 
 % fprintf('%40s %5.2f\n','Difference between MatLab and C:',sum(Om(:)-Oc(:)))
 fprintf('%40s %5.2f\n','Difference between MatLab and CUDA:',sum(Om_m(:)-Ocu(:,1)))
+fprintf('%40s %5.2f\n','Difference between MatLab and C:',sum(Om_m(:)-Oc(:,1)))
 fprintf('%40s %5.2f [ms]\n','MatLab elapsed time:',myTOC*1000)
 
 clear Z iFILi ii
@@ -243,7 +254,7 @@ clear Z iFILi ii
 %% --- ::2d-std::
 % STD = sqrt( sum( (A-mean(A)).^2 ) / (numel(A)-1) );
 
-fpf('2d-SUM');
+fpf('2d-STD');
 
 Om_std      = zeros( Nmaps, 1 );
 myTOC       = 0;
@@ -251,18 +262,21 @@ for ii = 1:Nmaps
     if ii<10, day = ['0',num2str(ii)]; else day = num2str(ii); end
     iFILi   = fullfile( iDIR,[Fname,day,'-',METHOD,'-80.tif'] );
     Z       = geotiffread(iFILi);
-    fprintf('%s\n',iFILi)
+    %fprintf('%s\n',iFILi)
     tic;
-    Om_std(ii) = sum( (Z(:)-Om_m(ii)).^2 );
+    Om_std(ii) = sum( ( (Z(:)-Om_m(ii)) .* ROI(:) ).^2 );
+%     Om_std(ii) = sum( (Z(:)-Om_m(ii)).^2 );
     myTOC   = myTOC + toc;
 end
 % sqrt( XXX / (numel(A)-1) );
 Om_std      = sqrt( Om_std / (numel(Z)-1) );
 Om_std      = [Om_m,Om_m-Om_std,Om_m+Om_std];
 
-Ocu         = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOT');
+Ocu         = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTcu');
+Oc          = load('/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTc');
 
 fprintf('%40s %5.2f\n','Difference between MatLab and CUDA:',sum(Om_std(:)-Ocu(:)))
+fprintf('%40s %5.2f\n','Difference between MatLab and C:',sum(Om_std(:)-Oc(:)))
 fprintf('%40s %5.2f [ms]\n','MatLab elapsed time:',myTOC*1000)
 
 clear ii

@@ -34,7 +34,7 @@
 unsigned int		multiGPU=0;	/*	{ singleGPU, multiGPU } 	*/
 
 //	STAT:						/*	  0    1    2    3     4		*/
-unsigned int		STAT	= 0;/*	{ sum, min, max, mean, std }*/
+unsigned int		STAT	= 3;/*	{ sum, min, max, mean, std }*/
 //	input:
 unsigned int		Nmaps	= 31;
 // 	---SMALL---
@@ -55,6 +55,8 @@ const char			*EXT	= ".tif";
 const char			*oDIR	= "/home/giuliano/git/cuda/weatherprog-cudac/data/";
 const char 			*oFILc 	= "out_C.tif";
 const char 			*oFILcu	= "out_CUDA.tif";
+const char 			*oPLOTcu= "/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTcu";
+const char 			*oPLOTc = "/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOTc";
 // ************* GLOBAL VARs ************* //
 
 __global__ void reduction_3d_sum( const double *lin_maps, const unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps, double *sum_map ){
@@ -198,7 +200,8 @@ __global__ void reduction_3d_mean( const double *lin_maps, const unsigned char *
 		}
 	}
 	if(tid < map_len){
-		sum_map[tid] = sum_map[tid]*roiMap[tid] / Nmaps;
+		//sum_map[tid] = (double)(sum_map[tid] * (double)roiMap[tid]) / (double)Nmaps;
+		sum_map[tid] = (double)__fdividef( (float)(sum_map[tid] *roiMap[tid]) , (float)(Nmaps) );
 	}
 }
 
@@ -436,21 +439,26 @@ __global__ void reduction_2d_ssd( const double *lin_maps, const unsigned char *r
 	}
 }
 
-int C_sum_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+int C_sum_whole_mat( double *oGRID, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
 
 	unsigned int	ii=0;
 	uint32_t 		loc;
 	clock_t			start_t,end_t;
 
+	start_t = clock();
+
 	// initialize oGRID:
 	for( loc=0; loc<map_len; loc++ ) oGRID[loc]=0;
 
 	// computing node:
-	start_t = clock();
 	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
-		for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] + iGRIDi[ii*map_len + loc] + iGRIDi[(ii+1)*map_len + loc];
+		for( loc=0; loc<map_len; loc++ ) oGRID[loc] += iGRIDi[ii*map_len + loc] + iGRIDi[(ii+1)*map_len + loc];
 	}
 	if(Nmaps % 2) for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] + iGRIDi[(Nmaps-1)*map_len + loc];
+
+	// mask the GRID of statistics by ROI GRID:
+	for( loc=0; loc<map_len; loc++ ) oGRID[loc] *= roiMap[loc];
+
 	end_t = clock();
 
 	// save on HDD:
@@ -461,21 +469,26 @@ int C_sum_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
 	return elapsed_time;
 }
-int C_min_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+int C_min_whole_mat( double *oGRID, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
 
 	unsigned int	ii=0;
 	uint32_t 		loc;
 	clock_t			start_t,end_t;
+
+	start_t = clock();
 
 	// initialise oGRID:
 	for( loc=0; loc<map_len; loc++ ) oGRID[loc]=1000;
 
 	// computing node:
-	start_t = clock();
 	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
 		for( loc=0; loc<map_len; loc++ ) oGRID[loc] = fminf( fminf(oGRID[loc], iGRIDi[ii*map_len + loc]) , iGRIDi[(ii+1)*map_len + loc] );
 	}
 	if(Nmaps % 2) for( loc=0; loc<map_len; loc++ ) oGRID[loc] = fminf( oGRID[loc], iGRIDi[(Nmaps-1)*map_len + loc] );
+
+	// mask the GRID of statistics by ROI GRID:
+	for( loc=0; loc<map_len; loc++ ) oGRID[loc] *= roiMap[loc];
+
 	end_t = clock();
 
 	// save on HDD:
@@ -486,21 +499,26 @@ int C_min_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
 	return elapsed_time;
 }
-int C_max_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+int C_max_whole_mat( double *oGRID, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
 
 	unsigned int	ii=0;
 	uint32_t 		loc;
 	clock_t			start_t,end_t;
+
+	start_t = clock();
 
 	// initialise oGRID:
 	for( loc=0; loc<map_len; loc++ ) oGRID[loc]=-1000;
 
 	// computing node:
-	start_t = clock();
 	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
 		for( loc=0; loc<map_len; loc++ ) oGRID[loc] = fmaxf( fmaxf(oGRID[loc], iGRIDi[ii*map_len + loc]) , iGRIDi[(ii+1)*map_len + loc] );
 	}
 	if(Nmaps % 2) for( loc=0; loc<map_len; loc++ ) oGRID[loc] = fmaxf( oGRID[loc], iGRIDi[(Nmaps-1)*map_len + loc] );
+
+	// mask the GRID of statistics by ROI GRID:
+	for( loc=0; loc<map_len; loc++ ) oGRID[loc] *= roiMap[loc];
+
 	end_t = clock();
 
 	// save on HDD:
@@ -511,24 +529,27 @@ int C_max_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
 	return elapsed_time;
 }
-int C_mean_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+int C_mean_whole_mat( double *oGRID, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
 
 	unsigned int	ii=0;
 	uint32_t 		loc;
 	clock_t			start_t,end_t;
 
+	start_t = clock();
+
 	// initialize oGRID:
 	for( loc=0; loc<map_len; loc++ ) oGRID[loc]=0;
 
 	// computing node:
-	start_t = clock();
 	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
 		for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] + iGRIDi[ii*map_len + loc] + iGRIDi[(ii+1)*map_len + loc];
 	}
 	if(Nmaps % 2) for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] + iGRIDi[(Nmaps-1)*map_len + loc];
-	end_t = clock();
 
-	for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] / Nmaps;
+	// mask the GRID of statistics by ROI GRID:
+	for( loc=0; loc<map_len; loc++ ) oGRID[loc] = oGRID[loc] * roiMap[loc] / Nmaps;
+
+	end_t = clock();
 
 	// save on HDD:
 	geotiffwrite( iFIL1, oFIL_C, MD, oGRID );
@@ -538,7 +559,7 @@ int C_mean_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char 
 	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
 	return elapsed_time;
 }
-int C_std_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
+int C_std_whole_mat( double *oGRID, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_C, metadata MD ){
 	/*
  	 * 		The equation is split in four parts, given population A:
  	 *
@@ -556,11 +577,12 @@ int C_std_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	uint32_t 		loc;
 	clock_t			start_t,end_t;
 
+	start_t = clock();
+
 	// initialize oGRID:
 	for( loc=0; loc<map_len; loc++ ){ oGRID[loc]=0; meanGRID[loc]=0; }
 
 	// computing node:
-	start_t = clock();
 	//		** -1- MEAN **
 	for( ii=0; ii<Nmaps-(Nmaps % 2); ii+=2 ){
 		for( loc=0; loc<map_len; loc++ ) meanGRID[loc] = meanGRID[loc] + iGRIDi[ii*map_len + loc] + iGRIDi[(ii+1)*map_len + loc];
@@ -570,7 +592,7 @@ int C_std_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	//		** -2+3- MEAN of SQUARED DIFF **
 	for( loc=0; loc<map_len; loc++ ){
 		for( ii=0; ii<Nmaps; ii++ ) oGRID[loc] += powf(iGRIDi[ii*map_len + loc]-meanGRID[loc],2) / (Nmaps-1);
-		oGRID[loc] = sqrt(oGRID[loc]);
+		oGRID[loc] = sqrt(oGRID[loc])*roiMap[loc];
 	}
 	end_t = clock();
 	// save on HDD:
@@ -580,6 +602,50 @@ int C_std_whole_mat( double *oGRID, double *iGRIDi, unsigned int map_len, char *
 	int elapsed_time = (int)( (double)(end_t  - start_t ) / (double)CLOCKS_PER_SEC * 1000 );
 	//printf("%12s %5d [msec]\t%s\n", "Total time:",elapsed_time,"-C code-" );
 	return elapsed_time;
+}
+int C_std_2D_whole_mat( double *oPLOT, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, unsigned int Nmaps ){
+	/*
+ 	 * 		The equation is split in four parts, given population A:
+ 	 *
+	 * 			(1) MEAN of population A			--> m = mean(A)
+	 *					m:scalar, A:grid
+	 * 			(2)	SQUARED DIFFERENCES				--> B = (A-m).^2
+	 *
+	 * 			(2) MEAN (of squared differences)	--> C = b1/(N-1) + b2/(N-1) + ... + bN/(N-1)
+	 *					bi:singleton of B
+	 * 			(3)	SQRT							--> STD = sqrt( C )
+	 */
+
+	unsigned int	ii=0;
+	uint32_t 		loc;
+	clock_t			start_t,end_t;
+	unsigned int	Ncols			= 3;
+
+	start_t = clock();
+
+	// initialize oPLOT:
+	for( ii=0; ii<Nmaps*Ncols; ii++ ){ oPLOT[ii]=0; }
+
+	// computing node:
+	//		** -1- MEAN **
+	for( ii=0; ii<Nmaps; ii++ ) for( loc=0; loc<map_len; loc++ ) oPLOT[ii] += iGRIDi[loc + map_len*ii]*roiMap[loc];
+	for( ii=0; ii<Nmaps; ii++ ) oPLOT[ii] /= (map_len-1);
+	//		** -2+3- MEAN of SQUARED DIFF **
+	for( ii=0; ii<Nmaps; ii++ ) for( loc=0; loc<map_len; loc++ ) oPLOT[ii+Nmaps*1] += (powf( (iGRIDi[loc + map_len*ii]-oPLOT[ii])*roiMap[loc], 2 ) / (map_len-1));
+	//		** -4- STD
+	for( ii=0; ii<Nmaps; ii++ ){ oPLOT[ii+Nmaps*2] = oPLOT[ii] + sqrtf(oPLOT[ii+Nmaps*1]); oPLOT[ii+Nmaps*1] = oPLOT[ii] - sqrtf(oPLOT[ii+Nmaps*1]); }
+
+	end_t = clock();
+
+	// save file:
+	FILE *fid = fopen(oPLOTc,"w");
+	if (fid == NULL) { printf("Error opening file %s!\n",oPLOTc); exit(1); }
+	for(int rr=0;rr<Nmaps;rr++){ for(int cc=0;cc<Ncols;cc++){ fprintf(fid,"%9.5f ",oPLOT[rr+cc*Nmaps]); } fprintf(fid,"\n"); }
+	fclose(fid);
+
+	// elapsed time [ms]:
+	return (int)( (double)(end_t  - start_t ) / (double)CLOCKS_PER_SEC * 1000 );
+
 }
 int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned char *roiMap, unsigned int map_len, char *iFIL1, char *oFIL_CUDA, metadata MD ){
 
@@ -645,7 +711,7 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned char 
 		end_t = clock();
 		break;
 	case 3: // MEAN
-		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, 0.0,  (size_t)iMap_bytes) );
+		CUDA_CHECK_RETURN( cudaMemset(dev_oGRID, 0,  (size_t)iMap_bytes) );
 		start_t = clock();
 		reduction_3d_mean<<<grid,block>>>( dev_iGRIDi, dev_ROI, map_len, Nmaps, dev_oGRID );
 		CUDA_CHECK_RETURN( cudaMemcpy(oGRID, dev_oGRID, iMap_bytes, cudaMemcpyDeviceToHost) );
@@ -692,9 +758,8 @@ int CUDA_whole_mat( double *oGRID, double *oPLOT, double *iGRIDi, unsigned char 
 	geotiffwrite( iFIL1, oFIL_CUDA, MD, oGRID );
 
 	// save file:
-	const char *filename = "/home/giuliano/git/cuda/weatherprog-cudac/data/oPLOT";
-	FILE *fid = fopen(filename,"w");
-	if (fid == NULL) { printf("Error opening file %s!\n",filename); exit(1); }
+	FILE *fid = fopen(oPLOTcu,"w");
+	if (fid == NULL) { printf("Error opening file %s!\n",oPLOTcu); exit(1); }
 	for(int rr=0;rr<Nmaps;rr++){ for(int cc=0;cc<Ncols;cc++){ fprintf(fid,"%9.5f ",oPLOT[rr+cc*Nmaps]); } fprintf(fid,"\n"); }
 	fclose(fid);
 
@@ -740,7 +805,9 @@ void whole_mat_single_GPU(){
 	double *oGRID_c		= (double *) CPLMalloc( iMap_bytes 			);
 	double *oGRID_cu	= (double *) CPLMalloc( iMap_bytes			);
 	double *oPLOT_cu	= (double *) CPLMalloc( oPLOT_bytes 		);
-	double DIFF			= 0;
+	double *oPLOT_c		= (double *) CPLMalloc( oPLOT_bytes 		);
+	double mapDIFF		= 0;
+	double plotDIFF		= 0;
 	unsigned int loc	= 0;
 
 	// import ROI
@@ -758,50 +825,55 @@ void whole_mat_single_GPU(){
 		geotiffread( iFILi, MD, &iGRIDi[0] + ii*map_len );
 	}
 
-	// *** C ***
+	// *** C (3D) ***
 	switch(STAT){
 	case 0:
 		/*	SUM	*/
 		printf("**********\n* %s *\n* %s \n**********\n\n", "-SUM-","single");
-		elapsed_time_C 		= C_sum_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		elapsed_time_C 		= C_sum_whole_mat( oGRID_c, iGRIDi, roiMap, map_len, iFIL1, oFIL_C, MD);
 		break;
 
 	case 1:
 		/*	MIN	*/
 		printf("**********\n* %s *\n* %s *\n**********\n\n", "-MIN-","single");
-		elapsed_time_C 		= C_min_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		elapsed_time_C 		= C_min_whole_mat( oGRID_c, iGRIDi, roiMap, map_len, iFIL1, oFIL_C, MD);
 		break;
 
 	case 2:
 		/*	MAX	*/
 		printf("**********\n* %s *\n* %s *\n**********\n\n", "-MAX-","single");
-		elapsed_time_C 		= C_max_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		elapsed_time_C 		= C_max_whole_mat( oGRID_c, iGRIDi, roiMap, map_len, iFIL1, oFIL_C, MD);
 		break;
 
 	case 3:
 		/*	MEAN*/
 		printf("**********\n* %s *\n* %s *\n**********\n\n", "-MEAN-","single");
-		elapsed_time_C 		= C_mean_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		elapsed_time_C 		= C_mean_whole_mat( oGRID_c, iGRIDi, roiMap, map_len, iFIL1, oFIL_C, MD);
 		break;
 
 	case 4:
 		/*	STD	*/
 		printf("**********\n* %s *\n* %s *\n**********\n\n", "-STD-","single");
-		elapsed_time_C 		= C_std_whole_mat( oGRID_c, iGRIDi, map_len, iFIL1, oFIL_C, MD);
+		elapsed_time_C 		= C_std_whole_mat( oGRID_c, iGRIDi, roiMap, map_len, iFIL1, oFIL_C, MD);
 		break;
 	}
+	// *** C (2D) ***
+	elapsed_time_C 			= C_std_2D_whole_mat( oPLOT_c, iGRIDi, roiMap, map_len, Nmaps ) + elapsed_time_C;
 
-	// *** CUDA ***
+	// *** CUDA (2D/3D) ***
 	elapsed_time_CUDA 		= CUDA_whole_mat(oGRID_cu, oPLOT_cu, iGRIDi, roiMap, map_len, iFIL1, oFIL_CUDA, MD);
 
 	// DIFF
-	for( loc=0; loc<map_len; loc++ ) DIFF += (oGRID_c[loc] - oGRID_cu[loc]);
+	for( loc=0; loc<map_len; loc++ ) mapDIFF	+= (oGRID_c[loc] - oGRID_cu[loc]);
+	for( ii=0; ii<Nmaps; ii++ ) 	 plotDIFF	+= (oPLOT_c[ii]  - oPLOT_cu[ii]);
+
 
 	// print
-	printf( "%12s %5.2f\t[MB]\n",	"iGRIDi size:",	iMap_bytes*Nmaps/1000000		);
-	printf( "%12s %5.2f\t[MB]\n\n",	"oGRID size:",	iMap_bytes/1000000				);
-	printf( "%12s %5.2f\t[°C]\t%s\n", "DIFF:",DIFF,"-(C-CUDA)-" 					);
-	printf( "%12s %5d\t[msec]\t%s\n", "Total time:",elapsed_time_C,"-C code-"		);
+	printf( "%12s %5.2f\t[MB]\n",	"iGRIDi size:",	iMap_bytes*Nmaps/1000000			);
+	printf( "%12s %5.2f\t[MB]\n\n",	"oGRID size:",	iMap_bytes/1000000					);
+	printf( "%12s %5.2f\t[°C]\t%s\n", "mapDIFF:",mapDIFF,"-(C-CUDA)-" 					);
+	printf( "%12s %5.2f\t[°C]\t%s\n", "plotDIFF:",plotDIFF,"-(C-CUDA)-" 				);
+	printf( "%12s %5d\t[msec]\t%s\n", "Total time:",elapsed_time_C,"-C code-"			);
 	printf( "%12s %5d\t[msec]\t%s\n", "Total time:",elapsed_time_CUDA,"-CUDA code-" 	);
 	printf( "%12s %5d\t[times]\t%s\n", "Speedup:", (int)((double)(elapsed_time_C)/(double)(elapsed_time_CUDA)),"-C/CUDA-" );
 
